@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.git/
+.github/
+frontend/
+node_modules/
+dist/
+output/
+*.sqlite3
+*.db

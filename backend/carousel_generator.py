@@ -9,6 +9,7 @@ import random
 from pathlib import Path
 from typing import List, Dict, Tuple
 from datetime import datetime
+# pyrefly: ignore [missing-import]
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from config import settings
 
@@ -471,14 +472,20 @@ def generate_carousel(post_content: Dict, post_index: int,
             img = generator(content, accent, accent2)
             path = post_dir / f"slide_{i + 1}.png"
             img.save(str(path), "PNG", quality=95)
-            image_paths.append(str(path))
-            log(f"  ✓ Slide {i + 1}/5 saved")
+            log(f"  ✓ Slide {i + 1}/5 generated locally")
+
+            # Upload to Cloudinary
+            from storage import upload_to_cloudinary
+            cloudinary_url = upload_to_cloudinary(str(path), folder=f"antigravity/{run_date}/post_{post_index + 1}")
+            image_paths.append(cloudinary_url)
+            log(f"  ✓ Slide {i + 1}/5 uploaded to Cloudinary: {cloudinary_url}")
+
         except Exception as e:
             log(f"  ✗ Slide {i + 1} failed: {e}")
             import traceback
             traceback.print_exc()
 
-    log(f"Carousel complete: {len(image_paths)} slides generated")
+    log(f"Carousel complete: {len(image_paths)} slides generated and uploaded")
     return image_paths
 
 

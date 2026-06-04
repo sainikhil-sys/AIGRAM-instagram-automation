@@ -132,7 +132,7 @@ def _fetch_newsapi(query: str = "artificial intelligence OR ChatGPT OR Gemini OR
         for a in data.get("articles", []):
             articles.append({
                 "title": a.get("title", ""),
-                "summary": a.get("description", "")[:500],
+                "summary": (a.get("description") or "")[:500],
                 "url": a.get("url", ""),
                 "source": a.get("source", {}).get("name", "NewsAPI"),
                 "published_parsed": None,
