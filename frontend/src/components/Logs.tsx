@@ -1,25 +1,22 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
 
-export default function Logs({ apiUrl }) {
-  const [logs, setLogs] = useState([]);
-  const terminalRef = useRef(null);
+interface LogsProps {
+  apiUrl: string;
+}
 
-  useEffect(() => {
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 3000);
-    return () => clearInterval(interval);
-  }, []);
+export default function Logs({ apiUrl }: LogsProps) {
+  const terminalRef = useRef<HTMLDivElement>(null);
 
-  const fetchLogs = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/logs?limit=100`);
-      const data = await res.json();
-      // Extract the logs array from response dictionary
-      setLogs(data.logs || []);
-    } catch (e) {
-      console.error("Failed to fetch logs:", e);
-    }
-  };
+  const { data: logs = [] } = useQuery({
+    queryKey: ['logs'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/logs?limit=100`);
+      return res.data.data || [];
+    },
+    refetchInterval: 3000,
+  });
 
   useEffect(() => {
     if (terminalRef.current) {
@@ -27,7 +24,7 @@ export default function Logs({ apiUrl }) {
     }
   }, [logs]);
 
-  const getLogColorClass = (msg) => {
+  const getLogColorClass = (msg: string) => {
     const msgLower = msg.toLowerCase();
     if (msgLower.includes('error') || msg.includes('❌') || msg.includes('✗')) return 'log-error';
     if (msgLower.includes('success') || msg.includes('✓') || msgLower.includes('complete')) return 'log-success';
@@ -44,7 +41,7 @@ export default function Logs({ apiUrl }) {
         {logs.length === 0 ? (
           <div style={{ color: 'var(--text-dim)' }}>Waiting for system events...</div>
         ) : (
-          logs.map((log, i) => (
+          logs.map((log: string, i: number) => (
             <div key={i} className="log-line">
               <span className={getLogColorClass(log)}>
                 {log}

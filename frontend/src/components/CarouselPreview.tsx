@@ -1,50 +1,40 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Send, AlertCircle, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 
-export default function CarouselPreview({ apiUrl }) {
-  const [posts, setPosts] = useState([]);
+interface CarouselPreviewProps {
+  apiUrl: string;
+}
+
+export default function CarouselPreview({ apiUrl }: CarouselPreviewProps) {
+  const queryClient = useQueryClient();
   const [selectedPostIndex, setSelectedPostIndex] = useState(0);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isPublishing, setIsPublishing] = useState(false);
 
-  useEffect(() => {
-    fetchPosts();
-  }, []);
+  const { data: posts = [], isLoading } = useQuery({
+    queryKey: ['posts'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/posts?limit=10`);
+      return res.data.data || [];
+    },
+  });
 
-  const fetchPosts = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/posts?limit=10`);
-      const data = await res.json();
-      setPosts(data.posts || []);
-    } catch (e) {
-      console.error("Failed to fetch posts:", e);
-    } finally {
-      setIsLoading(false);
+  const publishMutation = useMutation({
+    mutationFn: async (postId: number) => {
+      const res = await axios.post(`${apiUrl}/api/publish/${postId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      alert("Publish pipeline started in background! Check logs for real-time status.");
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['posts'] });
+      }, 3000);
+    },
+    onError: (error: any) => {
+      alert(`Error triggering publish: ${error.message}`);
     }
-  };
-
-  const publishCurrentPost = async () => {
-    const post = posts[selectedPostIndex];
-    if (!post) return;
-    
-    setIsPublishing(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/publish/${post.id}`, { method: 'POST' });
-      if (res.ok) {
-        alert("Publish pipeline started in background! Check logs for real-time status.");
-        // Refresh posts list
-        setTimeout(fetchPosts, 3000);
-      } else {
-        alert("Failed to start publishing.");
-      }
-    } catch (e) {
-      alert("Error triggering publish: " + e.message);
-    } finally {
-      setIsPublishing(false);
-    }
-  };
+  });
 
   const activePost = posts[selectedPostIndex];
   const slideUrls = activePost?.image_urls || [];
@@ -87,14 +77,13 @@ export default function CarouselPreview({ apiUrl }) {
       <p className="page-subtitle">Inspect generated slides and publish manual override posts</p>
 
       <div className="grid-cols-2" style={{ gridTemplateColumns: '1fr 2fr', alignItems: 'start' }}>
-        {/* Left Sidebar: List of posts */}
         <div className="glass-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <h3 style={{ fontSize: '16px', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
             Generated Posts ({posts.length})
           </h3>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '420px', overflowY: 'auto', paddingRight: '4px' }}>
-            {posts.map((post, index) => (
+            {posts.map((post: any, index: number) => (
               <button
                 key={post.id}
                 onClick={() => {
@@ -122,10 +111,8 @@ export default function CarouselPreview({ apiUrl }) {
           </div>
         </div>
 
-        {/* Right Area: Interactive Device Frame & Caption */}
         <div className="glass-card" style={{ padding: '30px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
           
-          {/* Phone Frame Simulator */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <div className="phone-mockup">
               <div className="phone-screen">
@@ -138,7 +125,7 @@ export default function CarouselPreview({ apiUrl }) {
                       src={slideUrls[activeSlideIndex].startsWith('http') ? slideUrls[activeSlideIndex] : `${apiUrl}${slideUrls[activeSlideIndex]}`}
                       alt={`Slide ${activeSlideIndex + 1}`} 
                       className="phone-slide-img"
-                      onError={(e) => {
+                      onError={(e: any) => {
                         e.target.onerror = null;
                         e.target.src = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop&q=60";
                       }}
@@ -150,7 +137,6 @@ export default function CarouselPreview({ apiUrl }) {
                     </div>
                   )}
 
-                  {/* Navigation Arrows overlays */}
                   {slideUrls.length > 1 && (
                     <>
                       {activeSlideIndex > 0 && (
@@ -182,10 +168,9 @@ export default function CarouselPreview({ apiUrl }) {
               </div>
             </div>
 
-            {/* Slide Index Dot indicator */}
             {slideUrls.length > 0 && (
               <div className="carousel-dots">
-                {slideUrls.map((_, i) => (
+                {slideUrls.map((_: any, i: number) => (
                   <div key={i} className={`carousel-dot ${activeSlideIndex === i ? 'active' : ''}`} />
                 ))}
               </div>
@@ -196,7 +181,6 @@ export default function CarouselPreview({ apiUrl }) {
             </p>
           </div>
 
-          {/* Details & Caption display */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div>
               <span className="stat-label">Article Source</span>
@@ -226,13 +210,17 @@ export default function CarouselPreview({ apiUrl }) {
             </div>
 
             <button
-              onClick={publishCurrentPost}
-              disabled={isPublishing || activePost?.status === 'published'}
+              onClick={() => {
+                if (activePost) {
+                  publishMutation.mutate(activePost.id);
+                }
+              }}
+              disabled={publishMutation.isPending || activePost?.status === 'published'}
               className="btn-primary"
               style={{ width: '100%', justifyContent: 'center' }}
             >
               <Send size={18} />
-              {isPublishing ? 'Publishing...' : activePost?.status === 'published' ? 'Published!' : 'Publish Override Now'}
+              {publishMutation.isPending ? 'Publishing...' : activePost?.status === 'published' ? 'Published!' : 'Publish Override Now'}
             </button>
           </div>
 

@@ -12,9 +12,3 @@ httpx
 pydantic
 pydantic-settings
 python-multipart
-sqlalchemy
-psycopg2-binary
-redis
-cloudinary
-sentry-sdk[fastapi]
-prometheus-fastapi-instrumentator

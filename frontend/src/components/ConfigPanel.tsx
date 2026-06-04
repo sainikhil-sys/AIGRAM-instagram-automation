@@ -1,10 +1,18 @@
-import React, { useEffect, useState } from 'react';
-import { Settings, Save, Lock, AlertTriangle, ShieldCheck, HelpCircle, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Settings, Save, Lock, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 
-export default function ConfigPanel({ apiUrl }) {
-  const [config, setConfig] = useState({
-    instagram_username: '',
-    instagram_password: '',
+interface ConfigPanelProps {
+  apiUrl: string;
+}
+
+export default function ConfigPanel({ apiUrl }: ConfigPanelProps) {
+  const queryClient = useQueryClient();
+
+  const [formConfig, setFormConfig] = useState({
+    meta_access_token: '',
+    instagram_account_id: '',
     gemini_api_key: '',
     news_api_key: '',
     research_hour: 8,
@@ -13,90 +21,63 @@ export default function ConfigPanel({ apiUrl }) {
     publish_minute: 0
   });
 
-  const [igTestResult, setIgTestResult] = useState(null);
-  const [isTestingIg, setIsTestingIg] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [auditLogs, setAuditLogs] = useState([]);
-  const [isLoadingAudit, setIsLoadingAudit] = useState(true);
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/config`);
+      const cfg = res.data.data;
+      setFormConfig(prev => ({ ...prev, ...cfg }));
+      return cfg;
+    },
+    refetchOnWindowFocus: false,
+  });
 
-  useEffect(() => {
-    fetchConfig();
-    fetchAuditLogs();
-  }, []);
-
-  const fetchConfig = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/config`);
-      const data = await res.json();
-      setConfig(prev => ({
-        ...prev,
-        ...data.data
-      }));
-    } catch (e) {
-      console.error("Failed to load config:", e);
+  const { data: auditLogs = [], isLoading: isLoadingAudit, refetch: refetchAuditLogs } = useQuery({
+    queryKey: ['audit-logs'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/audit-logs?limit=50`);
+      return res.data.data || [];
     }
-  };
+  });
 
-  const fetchAuditLogs = async () => {
-    setIsLoadingAudit(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/audit-logs?limit=50`);
-      const data = await res.json();
-      setAuditLogs(data.data || []);
-    } catch (e) {
-      console.error("Failed to fetch audit logs:", e);
-    } finally {
-      setIsLoadingAudit(false);
-    }
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setIsSaving(true);
-    try {
-      // Send changes (blanks are skipped/not updated in backend depending on implementation)
-      const res = await fetch(`${apiUrl}/api/config`, {
-        method: 'POST',
+  const saveMutation = useMutation({
+    mutationFn: async (payload: string) => {
+      const res = await axios.post(`${apiUrl}/api/config`, payload, {
         headers: { 'Content-Type': 'application/json' },
-        body: jsonBody(config)
       });
-      if (res.ok) {
-        alert("Configuration updated and saved to PostgreSQL successfully!");
-        fetchConfig();
-        fetchAuditLogs();
-      } else {
-        alert("Failed to save configuration.");
-      }
-    } catch (e) {
-      alert("Error saving: " + e.message);
-    } finally {
-      setIsSaving(false);
+      return res.data;
+    },
+    onSuccess: () => {
+      alert("Configuration updated and saved to PostgreSQL successfully!");
+      queryClient.invalidateQueries({ queryKey: ['config'] });
+      refetchAuditLogs();
+    },
+    onError: (error: any) => {
+      alert(`Error saving: ${error.message}`);
     }
-  };
+  });
 
-  // Skip sending passwords if they were unchanged (i.e. if they are mask values "***")
-  const jsonBody = (cfg) => {
-    const payload = { ...cfg };
-    if (payload.instagram_password === '***') delete payload.instagram_password;
+  const testInstagramMutation = useMutation({
+    mutationFn: async () => {
+      const res = await axios.post(`${apiUrl}/api/test-instagram`);
+      return res.data;
+    },
+    onSuccess: () => {
+      refetchAuditLogs();
+    }
+  });
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = { ...formConfig };
+    if (payload.meta_access_token === '***') delete payload.meta_access_token;
+    if (payload.instagram_account_id === '***') delete payload.instagram_account_id;
     if (payload.gemini_api_key === '***') delete payload.gemini_api_key;
     if (payload.news_api_key === '***') delete payload.news_api_key;
-    return JSON.stringify(payload);
+    saveMutation.mutate(JSON.stringify(payload));
   };
 
-  const testInstagram = async () => {
-    setIsTestingIg(true);
-    setIgTestResult(null);
-    try {
-      const res = await fetch(`${apiUrl}/api/test-instagram`, { method: 'POST' });
-      const data = await res.json();
-      setIgTestResult(data.data || data);
-      fetchAuditLogs();
-    } catch (e) {
-      setIgTestResult({ success: false, error: e.message });
-    } finally {
-      setIsTestingIg(false);
-    }
-  };
+  const igTestResult = testInstagramMutation.data;
 
   return (
     <div className="animate-fade-in">
@@ -104,33 +85,32 @@ export default function ConfigPanel({ apiUrl }) {
       <p className="page-subtitle">Manage environment credentials, schedules, and view audit trails</p>
 
       <div className="config-grid">
-        {/* Settings Form */}
         <div className="glass-card config-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
             <Settings size={20} className="text-accent" />
             <h3 style={{ fontSize: '18px' }}>System Settings</h3>
           </div>
 
-          <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
             <div className="form-group">
-              <label className="form-label">Instagram Username</label>
+              <label className="form-label">Meta Access Token</label>
               <input
-                type="text"
+                type="password"
                 className="form-input"
-                value={config.instagram_username || ''}
-                onChange={e => setConfig({ ...config, instagram_username: e.target.value })}
-                placeholder="username"
+                value={formConfig.meta_access_token}
+                onChange={e => setFormConfig({ ...formConfig, meta_access_token: e.target.value })}
+                placeholder="EAA..."
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Instagram Password</label>
+              <label className="form-label">Instagram Account ID</label>
               <input
-                type="password"
+                type="text"
                 className="form-input"
-                value={config.instagram_password || ''}
-                onChange={e => setConfig({ ...config, instagram_password: e.target.value })}
-                placeholder="••••••••••••"
+                value={formConfig.instagram_account_id}
+                onChange={e => setFormConfig({ ...formConfig, instagram_account_id: e.target.value })}
+                placeholder="178414..."
               />
             </div>
 
@@ -139,8 +119,8 @@ export default function ConfigPanel({ apiUrl }) {
               <input
                 type="password"
                 className="form-input"
-                value={config.gemini_api_key || ''}
-                onChange={e => setConfig({ ...config, gemini_api_key: e.target.value })}
+                value={formConfig.gemini_api_key}
+                onChange={e => setFormConfig({ ...formConfig, gemini_api_key: e.target.value })}
                 placeholder="AI content generator key"
               />
             </div>
@@ -150,8 +130,8 @@ export default function ConfigPanel({ apiUrl }) {
               <input
                 type="password"
                 className="form-input"
-                value={config.news_api_key || ''}
-                onChange={e => setConfig({ ...config, news_api_key: e.target.value })}
+                value={formConfig.news_api_key}
+                onChange={e => setFormConfig({ ...formConfig, news_api_key: e.target.value })}
                 placeholder="News aggregator key (falls back to RSS)"
               />
             </div>
@@ -161,8 +141,8 @@ export default function ConfigPanel({ apiUrl }) {
                 <label className="form-label">Research Hour (24h)</label>
                 <select
                   className="form-input"
-                  value={config.research_hour}
-                  onChange={e => setConfig({ ...config, research_hour: parseInt(e.target.value) })}
+                  value={formConfig.research_hour}
+                  onChange={e => setFormConfig({ ...formConfig, research_hour: parseInt(e.target.value) })}
                 >
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
@@ -174,8 +154,8 @@ export default function ConfigPanel({ apiUrl }) {
                 <label className="form-label">Publish Hour (24h)</label>
                 <select
                   className="form-input"
-                  value={config.publish_hour}
-                  onChange={e => setConfig({ ...config, publish_hour: parseInt(e.target.value) })}
+                  value={formConfig.publish_hour}
+                  onChange={e => setFormConfig({ ...formConfig, publish_hour: parseInt(e.target.value) })}
                 >
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
@@ -186,20 +166,17 @@ export default function ConfigPanel({ apiUrl }) {
 
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={saveMutation.isPending}
               className="btn-primary"
               style={{ width: '100%', justifyContent: 'center', marginTop: '12px' }}
             >
               <Save size={18} />
-              {isSaving ? 'Saving Configurations...' : 'Save Config Overrides'}
+              {saveMutation.isPending ? 'Saving Configurations...' : 'Save Config Overrides'}
             </button>
           </form>
         </div>
 
-        {/* Integration Utilities & Details */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Instagram connection test */}
           <div className="glass-card" style={{ padding: '24px' }}>
             <h3 style={{ fontSize: '18px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '16px' }}>
               Instagram Diagnostics
@@ -209,13 +186,13 @@ export default function ConfigPanel({ apiUrl }) {
             </p>
 
             <button
-              onClick={testInstagram}
-              disabled={isTestingIg}
+              onClick={() => testInstagramMutation.mutate()}
+              disabled={testInstagramMutation.isPending}
               className="btn-secondary"
               style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: '8px' }}
             >
               <Activity size={16} />
-              {isTestingIg ? 'Authenticating and Testing...' : 'Test Connection'}
+              {testInstagramMutation.isPending ? 'Authenticating and Testing...' : 'Test Connection'}
             </button>
 
             {igTestResult && (
@@ -224,10 +201,10 @@ export default function ConfigPanel({ apiUrl }) {
                   <div style={{ color: 'var(--success)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
                       <ShieldCheck size={16} />
-                      Connected to @{igTestResult.username}
+                      Connected to @{igTestResult.data.username}
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginLeft: '22px' }}>
-                      Followers: {igTestResult.followers} | Posts: {igTestResult.posts}
+                      Followers: {igTestResult.data.followers} | Posts: {igTestResult.data.posts}
                     </div>
                   </div>
                 ) : (
@@ -236,7 +213,7 @@ export default function ConfigPanel({ apiUrl }) {
                     <div>
                       <strong>Login Failed:</strong>
                       <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', wordBreak: 'break-all' }}>
-                        {igTestResult.error}
+                        {igTestResult.error || testInstagramMutation.error?.message}
                       </p>
                     </div>
                   </div>
@@ -245,7 +222,6 @@ export default function ConfigPanel({ apiUrl }) {
             )}
           </div>
 
-          {/* Database/API Details */}
           <div className="glass-card" style={{ padding: '24px' }}>
             <h3 style={{ fontSize: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '12px' }}>
               System Credentials Status
@@ -261,7 +237,7 @@ export default function ConfigPanel({ apiUrl }) {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Cloudinary Integration:</span>
-                <span style={{ color: config.news_api_key ? 'var(--success)' : 'var(--warning)', fontWeight: 600 }}>
+                <span style={{ color: config?.news_api_key ? 'var(--success)' : 'var(--warning)', fontWeight: 600 }}>
                   Active
                 </span>
               </div>
@@ -271,18 +247,16 @@ export default function ConfigPanel({ apiUrl }) {
               </div>
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* System Audit logs (Audit logging) */}
       <div className="glass-card" style={{ marginTop: '28px', padding: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '16px' }}>
           <h3 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Lock size={18} />
             System Audit Trail
           </h3>
-          <button onClick={fetchAuditLogs} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
+          <button onClick={() => refetchAuditLogs()} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }}>
             Refresh
           </button>
         </div>
@@ -305,7 +279,7 @@ export default function ConfigPanel({ apiUrl }) {
                 </tr>
               </thead>
               <tbody>
-                {auditLogs.map((log) => (
+                {auditLogs.map((log: any) => (
                   <tr key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
                     <td style={{ padding: '8px', color: 'var(--text-dim)' }}>
                       {log.timestamp ? new Date(log.timestamp).toISOString().replace('T', ' ').slice(0, 19) : ''}
@@ -332,7 +306,6 @@ export default function ConfigPanel({ apiUrl }) {
           </div>
         )}
       </div>
-
     </div>
   );
 }

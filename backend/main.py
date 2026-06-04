@@ -1,5 +1,5 @@
 """
-main.py — FastAPI Server + APScheduler for AI Instagram Automation
+main.py — FastAPI Server + APScheduler for Local SQLite AI Instagram Automation
 Entry point for the backend system
 """
 import asyncio
@@ -17,26 +17,14 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# pyrefly: ignore [missing-import]
 import uvicorn
-# pyrefly: ignore [missing-import]
-import sentry_sdk
-# pyrefly: ignore [missing-import]
-from sentry_sdk.integrations.fastapi import FastAPIIntegration
-# pyrefly: ignore [missing-import]
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
-# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles # pyrefly: ignore [missing-import]
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse # pyrefly: ignore [missing-import]
-# pyrefly: ignore [missing-import]
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel
-# pyrefly: ignore [missing-import]
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-# pyrefly: ignore [missing-import]
 from apscheduler.triggers.cron import CronTrigger
-# pyrefly: ignore [missing-import]
-from prometheus_fastapi_instrumentator import Instrumentator
 
 from config import settings
 from database import (
@@ -48,36 +36,20 @@ from news_agent import research_top_news
 from content_engine import generate_all_posts
 from carousel_generator import generate_all_carousels
 from instagram_publisher import publisher
-from redis_service import redis_service
-from cloudinary_service import cloudinary_service
-
-# ── Sentry Error Tracking ─────────────────────────────────────────────────────
-if settings.SENTRY_DSN:
-    try:
-        sentry_sdk.init(
-            dsn=settings.SENTRY_DSN,
-            integrations=[FastAPIIntegration()],
-            traces_sample_rate=1.0,
-            profiles_sample_rate=1.0,
-        )
-        print("[Sentry] SDK monitoring active.")
-    except Exception as e:
-        print(f"[Sentry] Failed to initialize: {e}")
 
 # ── App Lifespan Handler ──────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
     # Startup
-    print("[*] AI Instagram Automation System Starting...")
+    print("[*] Local AI Instagram Automation System Starting...")
     
-    # Initialize Neon PostgreSQL schemas
+    # Initialize SQLite database
     try:
         init_db()
-        print("[*] Database tables initialized successfully.")
+        print("[*] Local SQLite database tables initialized.")
     except Exception as e:
-        print(f"[Fatal] Database schema generation failed: {e}")
-        # Continue so container doesn't loop crash, letting healthz show error
+        print(f"[Fatal] SQLite schema generation failed: {e}")
 
     # Load dynamic overrides from config_store table
     try:
@@ -95,9 +67,9 @@ async def lifespan(app: FastAPI):
         actor="system",
         action="startup",
         status="success",
-        details="System started. Scheduler active."
+        details="Local automation system started. Scheduler active."
     )
-    log_event("System started. Scheduler active.", "info")
+    log_event("Local system started. Scheduler active.", "info")
     print(f"[*] Server ready at http://{settings.HOST}:{settings.PORT}")
     yield
     # Shutdown
@@ -111,9 +83,9 @@ async def lifespan(app: FastAPI):
     print("[*] System stopped.")
 
 
-app = FastAPI(title="AI Instagram Automation API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Local AI Instagram Automation API", version="2.0.0", lifespan=lifespan)
 
-# Allow CORS for Vercel frontends
+# Allow CORS for development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -139,17 +111,9 @@ pipeline_running = False
 pipeline_logs: List[str] = []
 latest_news: List[dict] = []
 
-# ── Prometheus Instrumentation ────────────────────────────────────────────────
-if settings.ENABLE_METRICS:
-    try:
-        Instrumentator().instrument(app).expose(app, endpoint="/metrics")
-        print("[Prometheus] Endpoint active under /metrics")
-    except Exception as e:
-        print(f"[Prometheus] Instrumentator error: {e}")
-
 # ── Utility Logging ───────────────────────────────────────────────────────────
 def log_event(msg: str, level: str = "info"):
-    """Log an event to stdout, in-memory list, DB run logs, and Redis list"""
+    """Log an event to stdout, in-memory list, and local SQLite DB"""
     ts = datetime.now().strftime("%H:%M:%S")
     entry = f"[{ts}] {msg}"
     
@@ -158,10 +122,7 @@ def log_event(msg: str, level: str = "info"):
     if len(pipeline_logs) > 200:
         pipeline_logs.pop(0)
 
-    # Store in Upstash Redis stream
-    redis_service.push_log(f"{datetime.now().isoformat()} | {level.upper()} | {msg}")
-
-    # Store in PostgreSQL log
+    # Store in SQLite log
     run_date = datetime.now().strftime("%Y-%m-%d")
     try:
         add_log(run_date, "pipeline", msg, level)
@@ -179,145 +140,126 @@ async def run_research_pipeline():
         log_event("Pipeline already running, skipping", "warning")
         return
 
-    # Distributed locking via Redis to support clustered backend nodes
-    with redis_service.acquire_lock("research_pipeline", expire_seconds=1800) as acquired:
-        if not acquired:
-            log_event("Research execution blocked: Another node is running the pipeline.", "warning")
+    pipeline_running = True
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    add_audit_log(actor="system", action="run_research_pipeline", status="success")
+
+    try:
+        log_event("🚀 Starting daily AI news research pipeline...")
+
+        # Phase 1: Research
+        log_event("📡 Phase 1: Researching latest AI news...")
+        articles = research_top_news(log_fn=log_event)
+        latest_news = articles
+        log_event(f"✓ Found {len(articles)} top AI news articles")
+
+        if not articles:
+            log_event("⚠ No news articles found. Pipeline aborting.", "warning")
             return
 
-        pipeline_running = True
-        run_date = datetime.now().strftime("%Y-%m-%d")
-        add_audit_log(actor="system", action="run_research_pipeline", status="success")
+        # Phase 2: Generate content
+        log_event("🤖 Phase 2: Generating AI carousel content...")
+        posts = generate_all_posts(articles, log_fn=log_event)
+        log_event(f"✓ Generated content for {len(posts)} posts")
 
-        try:
-            log_event("🚀 Starting daily AI news research pipeline...")
+        # Phase 3: Generate carousel images
+        log_event("🎨 Phase 3: Rendering carousel slides...")
+        all_image_paths = generate_all_carousels(posts, run_date, log_fn=log_event)
+        log_event(f"✓ Generated {sum(len(p) for p in all_image_paths)} carousel slides")
 
-            # Phase 1: Research
-            log_event("📡 Phase 1: Researching latest AI news...")
-            # Attempt to pull from Redis cache first to be nice to RSS feeds
-            cached = redis_service.get_cached_news()
-            if cached:
-                articles = cached
-                log_event("✓ Pulled news from Redis cache")
-            else:
-                articles = research_top_news(log_fn=log_event)
-                redis_service.cache_news(articles, expire_seconds=7200)
-            
-            latest_news = articles
-            log_event(f"✓ Found {len(articles)} top AI news articles")
+        # Phase 3.5: Local URL Alias mapping
+        all_image_urls = []
+        for paths in all_image_paths:
+            urls = [
+                f"/output/{Path(p).relative_to(OUTPUT_DIR).as_posix()}"
+                for p in paths
+            ]
+            all_image_urls.append(urls)
 
-            if not articles:
-                log_event("⚠ No news articles found. Pipeline aborting.", "warning")
-                return
+        # Phase 4: Save to database
+        log_event("💾 Phase 4: Saving posts to database...")
+        for i, (post, image_paths, image_urls) in enumerate(zip(posts, all_image_paths, all_image_urls)):
+            article = post["article"]
+            content = post["content"]
 
-            # Phase 2: Generate content
-            log_event("🤖 Phase 2: Generating AI carousel content...")
-            posts = generate_all_posts(articles, log_fn=log_event)
-            log_event(f"✓ Generated content for {len(posts)} posts")
+            caption = content.get("caption", "")
+            hashtags = content.get("hashtags", [])
+            hashtag_str = " ".join(f"#{h.strip('#')}" for h in hashtags)
+            full_caption = f"{caption}\n\n{hashtag_str}"
 
-            # Phase 3: Generate carousel images
-            log_event("🎨 Phase 3: Rendering carousel slides...")
-            all_image_paths = generate_all_carousels(posts, run_date, log_fn=log_event)
-            log_event(f"✓ Generated {sum(len(p) for p in all_image_paths)} carousel slides")
+            slide_texts = {k: v for k, v in content.items() if k.startswith("slide")}
 
-            # Phase 3.5: Upload assets to Cloudinary (Production Storage)
-            log_event("☁️ Phase 3.5: Uploading generated slides to Cloudinary...")
-            all_image_urls = []
-            for i, paths in enumerate(all_image_paths, 1):
-                urls = cloudinary_service.upload_carousel_post(run_date, i, paths)
-                all_image_urls.append(urls)
-                log_event(f"  ✓ Carousel {i} uploaded to Cloudinary: {len(urls)} slides secured")
+            save_post(
+                run_date=run_date,
+                rank=i + 1,
+                topic=article.get("source", ""),
+                headline=article.get("title", ""),
+                source=article.get("source", ""),
+                source_url=article.get("url", ""),
+                virality_score=article.get("score", 0),
+                slide_texts=slide_texts,
+                caption=full_caption,
+                hashtags=hashtags,
+                image_paths=image_paths,
+                image_urls=image_urls
+            )
 
-            # Phase 4: Save to database
-            log_event("💾 Phase 4: Saving posts to database...")
-            for i, (post, image_paths, image_urls) in enumerate(zip(posts, all_image_paths, all_image_urls)):
-                article = post["article"]
-                content = post["content"]
+        log_event("✅ Research pipeline complete! Posts queued for 9:00 AM publishing.")
 
-                caption = content.get("caption", "")
-                hashtags = content.get("hashtags", [])
-                hashtag_str = " ".join(f"#{h.strip('#')}" for h in hashtags)
-                full_caption = f"{caption}\n\n{hashtag_str}"
-
-                slide_texts = {k: v for k, v in content.items() if k.startswith("slide")}
-
-                save_post(
-                    run_date=run_date,
-                    rank=i + 1,
-                    topic=article.get("source", ""),
-                    headline=article.get("title", ""),
-                    source=article.get("source", ""),
-                    source_url=article.get("url", ""),
-                    virality_score=article.get("score", 0),
-                    slide_texts=slide_texts,
-                    caption=full_caption,
-                    hashtags=hashtags,
-                    image_paths=image_paths,
-                    image_urls=image_urls
-                )
-
-            log_event("✅ Research pipeline complete! Posts queued for 9:00 AM publishing.")
-
-        except Exception as e:
-            import traceback
-            error_detail = traceback.format_exc()
-            log_event(f"❌ Pipeline error: {e}", "error")
-            log_event(error_detail, "error")
-            add_audit_log(actor="system", action="run_research_pipeline", status="failure", details=str(e))
-        finally:
-            pipeline_running = False
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        log_event(f"❌ Pipeline error: {e}", "error")
+        log_event(error_detail, "error")
+        add_audit_log(actor="system", action="run_research_pipeline", status="failure", details=str(e))
+    finally:
+        pipeline_running = False
 
 
 async def run_publish_pipeline():
     """9:00 AM job — Publish all queued posts to Instagram"""
-    with redis_service.acquire_lock("publish_pipeline", expire_seconds=900) as acquired:
-        if not acquired:
-            log_event("Publishing blocked: Another node is publishing today's posts.", "warning")
-            return
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    log_event("📤 Starting Instagram publishing pipeline...")
+    add_audit_log(actor="system", action="run_publish_pipeline", status="success")
 
-        run_date = datetime.now().strftime("%Y-%m-%d")
-        log_event("📤 Starting Instagram publishing pipeline...")
-        add_audit_log(actor="system", action="run_publish_pipeline", status="success")
+    posts = get_posts(run_date=run_date)
+    queued = [p for p in posts if p["status"] == "queued"]
 
-        posts = get_posts(run_date=run_date)
-        queued = [p for p in posts if p["status"] == "queued"]
+    if not queued:
+        log_event("No queued posts found for today. Run research first.", "warning")
+        return
 
-        if not queued:
-            log_event("No queued posts found for today. Run research first.", "warning")
-            return
+    log_event(f"Found {len(queued)} posts to publish")
 
-        log_event(f"Found {len(queued)} posts to publish")
+    if not settings.INSTAGRAM_USERNAME or not settings.INSTAGRAM_PASSWORD:
+        log_event("❌ Instagram credentials not configured. Set them in the dashboard.", "error")
+        return
 
-        if not settings.INSTAGRAM_USERNAME or not settings.INSTAGRAM_PASSWORD:
-            log_event("❌ Instagram credentials not configured. Set them in the dashboard.", "error")
-            return
+    for i, post in enumerate(queued):
+        log_event(f"📸 Publishing post {i + 1}/{len(queued)}: {post['headline'][:50]}...")
+        image_paths = post.get("image_paths", [])
+        caption = post.get("caption", "")
 
-        for i, post in enumerate(queued):
-            log_event(f"📸 Publishing post {i + 1}/{len(queued)}: {post['headline'][:50]}...")
-            image_paths = post.get("image_paths", [])
-            caption = post.get("caption", "")
+        ig_id = publisher.publish_carousel(
+            image_paths=image_paths,
+            caption=caption,
+            post_id=post["id"],
+            run_date=run_date,
+        )
 
-            # instagrapi uses local paths for uploads
-            ig_id = publisher.publish_carousel(
-                image_paths=image_paths,
-                caption=caption,
-                post_id=post["id"],
-                run_date=run_date,
-            )
+        if ig_id:
+            log_event(f"✅ Post {i + 1} published! Instagram ID: {ig_id}", "success")
+            add_audit_log(actor="system", action="publish_post", status="success", details=f"Post ID: {post['id']}, IG ID: {ig_id}")
+        else:
+            log_event(f"❌ Post {i + 1} failed to publish", "error")
+            add_audit_log(actor="system", action="publish_post", status="failure", details=f"Post ID: {post['id']}")
 
-            if ig_id:
-                log_event(f"✅ Post {i + 1} published! Instagram ID: {ig_id}", "success")
-                add_audit_log(actor="system", action="publish_post", status="success", details=f"Post ID: {post['id']}, IG ID: {ig_id}")
-            else:
-                log_event(f"❌ Post {i + 1} failed to publish", "error")
-                add_audit_log(actor="system", action="publish_post", status="failure", details=f"Post ID: {post['id']}")
+        # Delay between posts
+        if i < len(queued) - 1:
+            log_event("Waiting 30 seconds before next post...")
+            await asyncio.sleep(30)
 
-            # Delay between posts (Instagram safety rate limit throttling)
-            if i < len(queued) - 1:
-                log_event("Waiting 30 seconds before next post...")
-                await asyncio.sleep(30)
-
-        log_event("📊 Publishing pipeline complete!")
+    log_event("📊 Publishing pipeline complete!")
 
 
 # ── API Routes ────────────────────────────────────────────────────────────────
@@ -329,40 +271,21 @@ async def root():
 
 @app.get("/healthz")
 async def health_check():
-    """Liveness probe validating connection to Neon PostgreSQL and Upstash Redis"""
-    postgres_ok = False
-    redis_ok = False
-    details = {}
-
-    # Test Postgres (SQLAlchemy Pool)
+    """Liveness probe validating writeability of SQLite database"""
+    sqlite_ok = False
     try:
-        # pyrefly: ignore [missing-import]
-        from sqlalchemy.sql import text
-        from database import engine
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        postgres_ok = True
-        details["postgres"] = "healthy"
-    except Exception as e:
-        details["postgres"] = f"unhealthy: {e}"
+        init_db()
+        sqlite_ok = True
+    except Exception:
+        pass
 
-    # Test Redis (Ping)
-    try:
-        if redis_service.is_connected():
-            redis_ok = True
-            details["redis"] = "healthy"
-        else:
-            details["redis"] = "unhealthy: ping failed"
-    except Exception as e:
-        details["redis"] = f"unhealthy: {e}"
-
-    status_code = 200 if (postgres_ok and redis_ok) else 503
+    status_code = 200 if sqlite_ok else 503
     return JSONResponse(
         status_code=status_code,
         content={
             "status": "healthy" if status_code == 200 else "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            **details
+            "database": "SQLite active" if sqlite_ok else "unhealthy",
+            "timestamp": datetime.utcnow().isoformat()
         }
     )
 
@@ -375,8 +298,8 @@ async def get_status():
         "instagram_configured": bool(settings.INSTAGRAM_USERNAME and settings.INSTAGRAM_PASSWORD),
         "gemini_configured": bool(settings.GEMINI_API_KEY),
         "newsapi_configured": bool(settings.NEWS_API_KEY),
-        "cloudinary_configured": cloudinary_service.configured,
-        "redis_configured": redis_service.is_connected(),
+        "cloudinary_configured": False, # Local storage only
+        "redis_configured": False,      # Local SQLite only
         "schedule": {
             "research": f"{settings.RESEARCH_HOUR:02d}:{settings.RESEARCH_MINUTE:02d}",
             "publish": f"{settings.PUBLISH_HOUR:02d}:{settings.PUBLISH_MINUTE:02d}",
@@ -389,11 +312,7 @@ async def get_status():
 
 @app.get("/api/news")
 async def get_news():
-    # Attempt to read cached news
-    news = redis_service.get_cached_news()
-    if not news:
-        news = latest_news
-    return {"success": True, "data": news}
+    return {"success": True, "data": latest_news}
 
 
 @app.get("/api/posts")
@@ -402,11 +321,7 @@ async def get_posts_api(date: Optional[str] = None, limit: int = 20):
     
     # Process image URLs
     for post in posts:
-        # Check if Cloudinary URLs are stored
-        if post.get("image_urls") and len(post["image_urls"]) > 0:
-            post["image_urls"] = post["image_urls"]
-        else:
-            # Fallback to local files
+        if not post.get("image_urls") or len(post["image_urls"]) == 0:
             post["image_urls"] = [
                 f"/output/{Path(p).relative_to(OUTPUT_DIR).as_posix()}"
                 for p in post.get("image_paths", [])
@@ -417,30 +332,10 @@ async def get_posts_api(date: Optional[str] = None, limit: int = 20):
 
 @app.get("/api/logs")
 async def get_logs_api(limit: int = 100):
-    # Retrieve logs stream from Upstash Redis
-    redis_logs = redis_service.get_logs(limit)
-    live_logs = []
-    
-    for rl in redis_logs:
-        try:
-            parts = rl.split(" | ", 2)
-            if len(parts) == 3:
-                # Format: [time] message
-                dt = datetime.fromisoformat(parts[0])
-                live_logs.append(f"[{dt.strftime('%H:%M:%S')}] {parts[2]}")
-            else:
-                live_logs.append(rl)
-        except Exception:
-            live_logs.append(rl)
-
-    # Fallback to backend instance in-memory list
-    if not live_logs:
-        live_logs = pipeline_logs[-50:]
-
     db_logs = get_logs(limit=limit)
     return {
         "success": True,
-        "logs": live_logs,
+        "logs": pipeline_logs[-50:],
         "db_logs": db_logs,
     }
 
@@ -563,7 +458,7 @@ class ConfigUpdate(BaseModel):
 
 @app.post("/api/config")
 async def update_config(config: ConfigUpdate, request: Request):
-    """Update system configuration overrides stored in Postgres database"""
+    """Update system configuration overrides stored in SQLite config_store"""
     updates = {}
     if config.instagram_username is not None:
         updates["instagram_username"] = config.instagram_username

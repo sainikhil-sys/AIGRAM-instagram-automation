@@ -3,7 +3,6 @@ config.py — Central configuration and environment loading
 """
 import os
 from pathlib import Path
-# pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
 
 # Load .env from project root
@@ -13,21 +12,7 @@ if ENV_FILE.exists():
     load_dotenv(ENV_FILE)
 
 class Settings:
-    # Databases & Services (Neon PostgreSQL & Upstash Redis)
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/aigram")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-    # Cloudinary Integration
-    CLOUDINARY_URL: str = os.getenv("CLOUDINARY_URL", "")
-    CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
-    CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
-    CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
-
-    # Sentry & Monitoring
-    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
-    ENABLE_METRICS: bool = os.getenv("ENABLE_METRICS", "true").lower() == "true"
-
-    # Instagram Authentication
+    # Instagram Credentials
     INSTAGRAM_USERNAME: str = os.getenv("INSTAGRAM_USERNAME", "")
     INSTAGRAM_PASSWORD: str = os.getenv("INSTAGRAM_PASSWORD", "")
 
@@ -49,17 +34,18 @@ class Settings:
     OUTPUT_DIR: Path = BASE_DIR / "output"
     IMAGES_DIR: Path = OUTPUT_DIR / "images"
     POSTS_DIR: Path = OUTPUT_DIR / "posts"
+    DB_PATH: Path = BASE_DIR / "data" / "automation.db"
     FONTS_DIR: Path = Path(__file__).parent / "fonts"
     SESSION_DIR: Path = BASE_DIR / "data" / "sessions"
 
     def __init__(self):
         # Create required directories
         for d in [self.OUTPUT_DIR, self.IMAGES_DIR, self.POSTS_DIR,
-                  self.FONTS_DIR, self.SESSION_DIR]:
+                  self.DB_PATH.parent, self.FONTS_DIR, self.SESSION_DIR]:
             d.mkdir(parents=True, exist_ok=True)
 
     def load_db_overrides(self, db_config: dict):
-        """Update settings at runtime from database store overrides"""
+        """Update configurations from SQLite store overrides at runtime"""
         for k, v in db_config.items():
             k_upper = k.upper()
             if hasattr(self, k_upper):
@@ -75,30 +61,21 @@ class Settings:
                     print(f"[Config] Error applying override {k}={v}: {e}")
 
     def update(self, db_save_func, **kwargs):
-        """Update settings at runtime and save to database config_store"""
+        """Update settings at runtime and save to SQLite config_store"""
         for k, v in kwargs.items():
             k_upper = k.upper()
             if hasattr(self, k_upper):
                 setattr(self, k_upper, v)
-                # Persist override in the database
                 try:
                     db_save_func(k_upper, str(v))
                 except Exception as e:
                     print(f"[Config] Error saving {k_upper} to DB: {e}")
 
-        # Try to sync to local .env if writable (for local dev convenience)
+        # Try to sync to local .env if writable
         if ENV_FILE.exists():
             try:
                 lines = []
                 env_map = {
-                    "DATABASE_URL": self.DATABASE_URL,
-                    "REDIS_URL": self.REDIS_URL,
-                    "CLOUDINARY_URL": self.CLOUDINARY_URL,
-                    "CLOUDINARY_CLOUD_NAME": self.CLOUDINARY_CLOUD_NAME,
-                    "CLOUDINARY_API_KEY": self.CLOUDINARY_API_KEY,
-                    "CLOUDINARY_API_SECRET": self.CLOUDINARY_API_SECRET,
-                    "SENTRY_DSN": self.SENTRY_DSN,
-                    "ENABLE_METRICS": str(self.ENABLE_METRICS).lower(),
                     "INSTAGRAM_USERNAME": self.INSTAGRAM_USERNAME,
                     "INSTAGRAM_PASSWORD": self.INSTAGRAM_PASSWORD,
                     "GEMINI_API_KEY": self.GEMINI_API_KEY,
