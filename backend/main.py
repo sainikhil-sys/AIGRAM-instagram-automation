@@ -21,14 +21,21 @@ if sys.platform == 'win32':
 import uvicorn
 # pyrefly: ignore [missing-import]
 import sentry_sdk
+# pyrefly: ignore [missing-import]
 from sentry_sdk.integrations.fastapi import FastAPIIntegration
+# pyrefly: ignore [missing-import]
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles # pyrefly: ignore [missing-import]
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse # pyrefly: ignore [missing-import]
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
+# pyrefly: ignore [missing-import]
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+# pyrefly: ignore [missing-import]
 from apscheduler.triggers.cron import CronTrigger
+# pyrefly: ignore [missing-import]
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from config import settings
@@ -329,6 +336,7 @@ async def health_check():
 
     # Test Postgres (SQLAlchemy Pool)
     try:
+        # pyrefly: ignore [missing-import]
         from sqlalchemy.sql import text
         from database import engine
         with engine.connect() as conn:
@@ -361,7 +369,7 @@ async def health_check():
 
 @app.get("/api/status")
 async def get_status():
-    return {
+    data = {
         "status": "running",
         "pipeline_active": pipeline_running,
         "instagram_configured": bool(settings.INSTAGRAM_USERNAME and settings.INSTAGRAM_PASSWORD),
@@ -376,6 +384,7 @@ async def get_status():
         "server_time": datetime.now().isoformat(),
         "log_count": len(pipeline_logs),
     }
+    return {"success": True, "data": data}
 
 
 @app.get("/api/news")
@@ -384,7 +393,7 @@ async def get_news():
     news = redis_service.get_cached_news()
     if not news:
         news = latest_news
-    return {"news": news}
+    return {"success": True, "data": news}
 
 
 @app.get("/api/posts")
@@ -403,7 +412,7 @@ async def get_posts_api(date: Optional[str] = None, limit: int = 20):
                 for p in post.get("image_paths", [])
                 if Path(p).exists()
             ]
-    return {"posts": posts, "total": len(posts)}
+    return {"success": True, "posts": posts, "total": len(posts)}
 
 
 @app.get("/api/logs")
@@ -430,7 +439,8 @@ async def get_logs_api(limit: int = 100):
 
     db_logs = get_logs(limit=limit)
     return {
-        "live_logs": live_logs,
+        "success": True,
+        "logs": live_logs,
         "db_logs": db_logs,
     }
 
@@ -440,9 +450,9 @@ async def get_audit_logs_api(limit: int = 100):
     """Retrieve audit logs for admin panel"""
     try:
         logs = get_audit_logs(limit)
-        return {"audit_logs": logs}
+        return {"success": True, "data": logs}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 
 @app.post("/api/run-research")
@@ -458,7 +468,7 @@ async def trigger_research(background_tasks: BackgroundTasks, request: Request):
         ip_address=request.client.host if request.client else None
     )
     background_tasks.add_task(run_research_pipeline)
-    return {"message": "Research pipeline started", "status": "started"}
+    return {"success": True, "message": "Research pipeline started", "status": "started"}
 
 
 @app.post("/api/run-publish")
@@ -471,7 +481,7 @@ async def trigger_publish(background_tasks: BackgroundTasks, request: Request):
         ip_address=request.client.host if request.client else None
     )
     background_tasks.add_task(run_publish_pipeline)
-    return {"message": "Publishing pipeline started", "status": "started"}
+    return {"success": True, "message": "Publishing pipeline started", "status": "started"}
 
 
 @app.post("/api/run-all")
@@ -493,7 +503,7 @@ async def trigger_full_pipeline(background_tasks: BackgroundTasks, request: Requ
         ip_address=request.client.host if request.client else None
     )
     background_tasks.add_task(full_run)
-    return {"message": "Full pipeline started (research → publish)", "status": "started"}
+    return {"success": True, "message": "Full pipeline started (research → publish)", "status": "started"}
 
 
 @app.post("/api/publish/{post_id}")
@@ -531,13 +541,13 @@ async def publish_single(post_id: int, background_tasks: BackgroundTasks, reques
             )
 
     background_tasks.add_task(do_publish)
-    return {"message": f"Publishing post {post_id}...", "status": "started"}
+    return {"success": True, "message": f"Publishing post {post_id}...", "status": "started"}
 
 
 @app.get("/api/analytics")
 async def get_analytics():
     summary = get_analytics_summary()
-    return {"analytics": summary}
+    return {"success": True, "data": summary}
 
 
 class ConfigUpdate(BaseModel):
@@ -585,13 +595,13 @@ async def update_config(config: ConfigUpdate, request: Request):
         ip_address=request.client.host if request.client else None
     )
 
-    return {"message": "Configuration updated successfully"}
+    return {"success": True, "message": "Configuration updated successfully"}
 
 
 @app.get("/api/config")
 async def get_config():
     """Get current config (masked passwords and keys)"""
-    return {
+    config_data = {
         "instagram_username": settings.INSTAGRAM_USERNAME,
         "instagram_password": "***" if settings.INSTAGRAM_PASSWORD else "",
         "gemini_api_key": "***" if settings.GEMINI_API_KEY else "",
@@ -601,6 +611,7 @@ async def get_config():
         "publish_hour": settings.PUBLISH_HOUR,
         "publish_minute": settings.PUBLISH_MINUTE,
     }
+    return {"success": True, "data": config_data}
 
 
 @app.post("/api/test-instagram")
@@ -615,7 +626,7 @@ async def test_instagram(request: Request):
         details=result.get("error", "Instagram verified"),
         ip_address=request.client.host if request.client else None
     )
-    return result
+    return {"success": result.get("success", False), "data": result}
 
 
 # ── Scheduler Setup ───────────────────────────────────────────────────────────
@@ -666,7 +677,7 @@ async def get_schedule():
             "name": job.name,
             "next_run": next_run.isoformat() if next_run else None,
         })
-    return {"jobs": jobs}
+    return {"success": True, "data": jobs}
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

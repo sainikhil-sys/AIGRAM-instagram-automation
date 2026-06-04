@@ -475,6 +475,7 @@ def generate_carousel(post_content: Dict, post_index: int,
             log(f"  ✓ Slide {i + 1}/5 generated locally")
 
             # Upload to Cloudinary
+            # pyrefly: ignore [missing-import]
             from storage import upload_to_cloudinary
             cloudinary_url = upload_to_cloudinary(str(path), folder=f"antigravity/{run_date}/post_{post_index + 1}")
             image_paths.append(cloudinary_url)

@@ -31,7 +31,7 @@ Base = declarative_base()
 class Post(Base):
     __tablename__ = "posts"
 
-    id = Column(Integer, primary key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     run_date = Column(String(50), nullable=False, index=True)
     rank = Column(Integer, nullable=False)
     topic = Column(String(255))
@@ -55,7 +55,7 @@ class Post(Base):
 class Analytics(Base):
     __tablename__ = "analytics"
 
-    id = Column(Integer, primary key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     likes = Column(Integer, default=0)
     comments = Column(Integer, default=0)
@@ -72,7 +72,7 @@ class Analytics(Base):
 class RunLog(Base):
     __tablename__ = "run_logs"
 
-    id = Column(Integer, primary key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     run_date = Column(String(50), nullable=False, index=True)
     phase = Column(String(100), nullable=False)
     message = Column(Text)
@@ -83,7 +83,7 @@ class RunLog(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
-    id = Column(Integer, primary key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     actor = Column(String(100), nullable=False)        # e.g. "system", "user_admin"
     action = Column(String(100), nullable=False)       # e.g. "trigger_pipeline", "update_config"
@@ -95,7 +95,7 @@ class AuditLog(Base):
 class ConfigStore(Base):
     __tablename__ = "config_store"
 
-    key = Column(String(100), primary key=True)
+    key = Column(String(100), primary_key=True)
     value = Column(Text)
 
 

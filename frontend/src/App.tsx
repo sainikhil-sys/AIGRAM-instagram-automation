@@ -31,7 +31,7 @@ function App() {
       try {
         const res = await fetch(`${API_URL}/api/status`);
         const data = await res.json();
-        setIsPipelineRunning(data.pipeline_active);
+        setIsPipelineRunning(data.data?.pipeline_active || false);
       } catch (e) {
         console.error("API link inactive:", e);
       }

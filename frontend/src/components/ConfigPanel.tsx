@@ -30,7 +30,7 @@ export default function ConfigPanel({ apiUrl }) {
       const data = await res.json();
       setConfig(prev => ({
         ...prev,
-        ...data
+        ...data.data
       }));
     } catch (e) {
       console.error("Failed to load config:", e);
@@ -42,7 +42,7 @@ export default function ConfigPanel({ apiUrl }) {
     try {
       const res = await fetch(`${apiUrl}/api/audit-logs?limit=50`);
       const data = await res.json();
-      setAuditLogs(data.audit_logs || []);
+      setAuditLogs(data.data || []);
     } catch (e) {
       console.error("Failed to fetch audit logs:", e);
     } finally {
@@ -89,7 +89,7 @@ export default function ConfigPanel({ apiUrl }) {
     try {
       const res = await fetch(`${apiUrl}/api/test-instagram`, { method: 'POST' });
       const data = await res.json();
-      setIgTestResult(data);
+      setIgTestResult(data.data || data);
       fetchAuditLogs();
     } catch (e) {
       setIgTestResult({ success: false, error: e.message });

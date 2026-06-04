@@ -1,80 +1,62 @@
-import React, { useEffect, useState } from 'react';
-import { Activity, Image as ImageIcon, Send, Clock, AlertTriangle, Loader2, Play, Sparkles, CheckCircle, Database } from 'lucide-react';
+import { useState } from 'react';
+import { Activity, Image as ImageIcon, Clock, AlertTriangle, Loader2, Play, Sparkles, CheckCircle } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 
-export default function Dashboard({ apiUrl }) {
-  const [status, setStatus] = useState(null);
-  const [posts, setPosts] = useState([]);
-  const [news, setNews] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+interface DashboardProps {
+  apiUrl: string;
+}
+
+export default function Dashboard({ apiUrl }: DashboardProps) {
+  const queryClient = useQueryClient();
   const [isTriggering, setIsTriggering] = useState(false);
 
-  useEffect(() => {
-    fetchStatus();
-    fetchPosts();
-    fetchNews();
-    const interval = setInterval(() => {
-      fetchStatus();
-      fetchPosts(false);
-      fetchNews();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ['status'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/status`);
+      return res.data.data;
+    },
+    refetchInterval: 5000,
+  });
 
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/status`);
-      const data = await res.json();
-      setStatus(data);
-    } catch (e) {
-      console.error("Failed to fetch status:", e);
-    }
-  };
+  const { data: news = [] } = useQuery({
+    queryKey: ['news'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/news`);
+      return res.data.data || [];
+    },
+    refetchInterval: 5000,
+  });
 
-  const fetchNews = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/news`);
-      const data = await res.json();
-      setNews(data.news || []);
-    } catch (e) {
-      console.error("Failed to fetch news:", e);
-    }
-  };
+  const { data: postsData, isLoading: postsLoading, error: postsError } = useQuery({
+    queryKey: ['posts'],
+    queryFn: async () => {
+      const res = await axios.get(`${apiUrl}/api/posts?limit=5`);
+      return res.data;
+    },
+    refetchInterval: 5000,
+  });
 
-  const fetchPosts = async (showLoading = true) => {
-    if (showLoading) setIsLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${apiUrl}/api/posts?limit=5`);
-      if (!res.ok) throw new Error("Failed to fetch posts");
-      const data = await res.json();
-      setPosts(data.posts || []);
-    } catch (e) {
-      console.error(e);
-      setError(e.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const posts = postsData?.posts || [];
 
-  const triggerPipeline = async (endpoint, label) => {
-    setIsTriggering(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/${endpoint}`, { method: 'POST' });
-      if (res.ok) {
-        alert(`${label} started successfully! Check system logs for progress.`);
-      } else {
-        alert(`Failed to start ${label}.`);
-      }
-    } catch (e) {
-      alert("Error contacting API: " + e.message);
-    } finally {
-      setIsTriggering(false);
-      fetchStatus();
-    }
-  };
+  const triggerMutation = useMutation({
+    mutationFn: async (endpoint: string) => {
+      const res = await axios.post(`${apiUrl}/api/${endpoint}`);
+      return res.data;
+    },
+    onMutate: () => setIsTriggering(true),
+    onSuccess: (_, endpoint) => {
+      alert(`Pipeline (${endpoint}) started successfully!`);
+      queryClient.invalidateQueries({ queryKey: ['status'] });
+    },
+    onError: (error: any) => {
+      alert(`Error starting pipeline: ${error.message}`);
+    },
+    onSettled: () => setIsTriggering(false),
+  });
 
-  const getSystemPill = (isActive, label) => (
+  const getSystemPill = (isActive: boolean, label: string) => (
     <span style={{
       display: 'inline-flex',
       alignItems: 'center',
@@ -94,21 +76,19 @@ export default function Dashboard({ apiUrl }) {
 
   return (
     <div className="animate-fade-in">
-      {/* Header bar and diagnostic pills */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Real-time overview of your Instagram media factory</p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '400px' }}>
-          {getSystemPill(status?.instagram_configured, "Instagram")}
-          {getSystemPill(status?.gemini_configured, "Gemini AI")}
-          {getSystemPill(status?.cloudinary_configured, "Cloudinary")}
-          {getSystemPill(status?.redis_configured, "Redis Cache")}
+          {getSystemPill(!!status?.instagram_configured, "Instagram")}
+          {getSystemPill(!!status?.gemini_configured, "Gemini AI")}
+          {getSystemPill(!!status?.cloudinary_configured, "Cloudinary")}
+          {getSystemPill(!!status?.redis_configured, "Redis Cache")}
         </div>
       </div>
 
-      {/* Grid of stats */}
       <div className="grid-cols-3">
         <div className="glass-card stat-card delay-1 animate-fade-in">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--accent-secondary)' }}>
@@ -116,7 +96,7 @@ export default function Dashboard({ apiUrl }) {
             <span className="stat-label">Pipeline Status</span>
           </div>
           <div className="stat-value" style={{ color: status?.pipeline_active ? 'var(--success)' : 'var(--text-main)' }}>
-            {status?.pipeline_active ? 'Processing' : 'Idle'}
+            {statusLoading ? '...' : (status?.pipeline_active ? 'Processing' : 'Idle')}
           </div>
         </div>
 
@@ -134,12 +114,11 @@ export default function Dashboard({ apiUrl }) {
             <span className="stat-label">Next Publication</span>
           </div>
           <div className="stat-value" style={{ fontSize: '28px', marginTop: 'auto' }}>
-            09:00 AM IST
+            {status?.schedule?.publish || "09:00"}
           </div>
         </div>
       </div>
 
-      {/* Manual Pipeline execution panels */}
       <div className="glass-card" style={{ padding: '20px', marginTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Manual Controls Override</h3>
@@ -149,7 +128,7 @@ export default function Dashboard({ apiUrl }) {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
-            onClick={() => triggerPipeline('run-research', 'Research Pipeline')}
+            onClick={() => triggerMutation.mutate('run-research')}
             disabled={isTriggering || status?.pipeline_active}
             className="btn-secondary"
             style={{ fontSize: '13px', padding: '8px 16px' }}
@@ -157,7 +136,7 @@ export default function Dashboard({ apiUrl }) {
             Run Research Only
           </button>
           <button
-            onClick={() => triggerPipeline('run-publish', 'Publish Pipeline')}
+            onClick={() => triggerMutation.mutate('run-publish')}
             disabled={isTriggering || status?.pipeline_active}
             className="btn-secondary"
             style={{ fontSize: '13px', padding: '8px 16px' }}
@@ -165,7 +144,7 @@ export default function Dashboard({ apiUrl }) {
             Publish Queued Posts
           </button>
           <button
-            onClick={() => triggerPipeline('run-all', 'Full Pipeline')}
+            onClick={() => triggerMutation.mutate('run-all')}
             disabled={isTriggering || status?.pipeline_active}
             className="btn-primary"
             style={{ fontSize: '13px', padding: '8px 16px' }}
@@ -176,10 +155,8 @@ export default function Dashboard({ apiUrl }) {
         </div>
       </div>
 
-      {/* Two column layout: News and Queued Posts */}
       <div className="grid-cols-2" style={{ gridTemplateColumns: '1fr 1fr', marginTop: '32px', gap: '30px' }}>
         
-        {/* Left Side: Researched News */}
         <div>
           <h2 style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
             <Sparkles size={18} style={{ color: 'var(--warning)' }} />
@@ -192,7 +169,7 @@ export default function Dashboard({ apiUrl }) {
                 <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No news researched yet. Run pipeline to fetch today's trending updates.</p>
               </div>
             ) : (
-              news.map((item, idx) => (
+              news.map((item: any, idx: number) => (
                 <div key={idx} className="glass-card" style={{ padding: '16px', position: 'relative', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ 
@@ -221,22 +198,21 @@ export default function Dashboard({ apiUrl }) {
           </div>
         </div>
 
-        {/* Right Side: Generated Content Posts queue */}
         <div>
           <h2 style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
             <CheckCircle size={18} style={{ color: 'var(--success)' }} />
             Publishing Queue
           </h2>
 
-          {isLoading ? (
+          {postsLoading ? (
             <div className="glass-card" style={{ padding: '40px', textAlign: 'center' }}>
               <Loader2 className="animate-spin" size={24} style={{ color: 'var(--accent-primary)', margin: '0 auto' }} />
               <p style={{ color: 'var(--text-muted)', marginTop: '8px', fontSize: '13px' }}>Loading posts queue...</p>
             </div>
-          ) : error ? (
+          ) : postsError ? (
             <div className="glass-card" style={{ padding: '30px', textAlign: 'center', borderColor: 'var(--error)' }}>
               <AlertTriangle size={24} style={{ color: 'var(--error)', margin: '0 auto' }} />
-              <p style={{ color: 'var(--text-muted)', marginTop: '8px', fontSize: '13px' }}>{error}</p>
+              <p style={{ color: 'var(--text-muted)', marginTop: '8px', fontSize: '13px' }}>{postsError.message}</p>
             </div>
           ) : posts.length === 0 ? (
             <div className="glass-card" style={{ padding: '40px', textAlign: 'center' }}>
@@ -244,9 +220,8 @@ export default function Dashboard({ apiUrl }) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {posts.map((post) => (
+              {posts.map((post: any) => (
                 <div key={post.id} className="glass-card" style={{ padding: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
-                  {/* Thumbnail */}
                   <div style={{ width: '70px', height: '70px', borderRadius: '8px', overflow: 'hidden', background: '#000', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {post.image_urls && post.image_urls.length > 0 ? (
                       <img 
@@ -259,7 +234,6 @@ export default function Dashboard({ apiUrl }) {
                     )}
                   </div>
 
-                  {/* Title and details */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                       <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>

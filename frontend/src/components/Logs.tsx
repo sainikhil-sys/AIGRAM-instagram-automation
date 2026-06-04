@@ -14,8 +14,8 @@ export default function Logs({ apiUrl }) {
     try {
       const res = await fetch(`${apiUrl}/api/logs?limit=100`);
       const data = await res.json();
-      // Extract the live_logs array from response dictionary
-      setLogs(data.live_logs || []);
+      // Extract the logs array from response dictionary
+      setLogs(data.logs || []);
     } catch (e) {
       console.error("Failed to fetch logs:", e);
     }
